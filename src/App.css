@@ -1,0 +1,548 @@
+/* =========================================================
+   DATAGUARD - DASHING ANIMATIONS
+   ========================================================= */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+}
+
+/* =========================================================
+   MAIN APP BACKGROUND
+   ========================================================= */
+
+/* =========================================================
+   PREMIUM DATAGUARD BACKGROUND
+   ========================================================= */
+
+main {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(37, 99, 235, 0.10), transparent 28%),
+    radial-gradient(circle at 85% 15%, rgba(124, 58, 237, 0.09), transparent 25%),
+    radial-gradient(circle at 70% 80%, rgba(59, 130, 246, 0.08), transparent 30%),
+    #f4f7fb;
+}
+
+/* Animated grid */
+main::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+
+  background-image:
+    linear-gradient(rgba(37, 99, 235, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.045) 1px, transparent 1px);
+
+  background-size: 45px 45px;
+
+  mask-image: linear-gradient(
+    to bottom,
+    black,
+    transparent 90%
+  );
+
+  pointer-events: none;
+  z-index: -2;
+
+  animation: gridMove 18s linear infinite;
+}
+
+/* Big glowing orb */
+main::after {
+  content: "";
+  position: absolute;
+
+  width: 420px;
+  height: 420px;
+
+  right: -150px;
+  top: 80px;
+
+  border-radius: 50%;
+
+  background: radial-gradient(
+    circle,
+    rgba(59, 130, 246, 0.20),
+    rgba(124, 58, 237, 0.08),
+    transparent 70%
+  );
+
+  filter: blur(20px);
+
+  pointer-events: none;
+  z-index: -1;
+
+  animation: orbFloat 8s ease-in-out infinite alternate;
+}
+
+/* =========================================================
+   SIDEBAR ANIMATION
+   ========================================================= */
+
+aside {
+  animation: sidebarAppear 0.8s ease-out;
+  z-index: 10;
+}
+
+aside > div:first-child {
+  animation: logoAppear 1s ease-out;
+}
+
+aside button {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 0.25s ease,
+    background 0.25s ease,
+    padding-left 0.25s ease;
+}
+
+aside button:hover {
+  transform: translateX(6px);
+  padding-left: 20px !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+aside button::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  background: #60a5fa;
+  transform: scaleY(0);
+  transition: transform 0.25s ease;
+}
+
+aside button:hover::before {
+  transform: scaleY(1);
+}
+
+/* =========================================================
+   LOGO
+   ========================================================= */
+
+aside div[style*="background: rgb(37, 99, 235)"] {
+  animation: logoPulse 2.5s ease-in-out infinite;
+  transition: transform 0.3s ease;
+}
+
+aside div[style*="background: rgb(37, 99, 235)"]:hover {
+  transform: rotate(-5deg) scale(1.08);
+}
+
+/* =========================================================
+   TOP BAR
+   ========================================================= */
+
+header {
+  position: relative;
+  z-index: 5;
+  animation: topbarAppear 0.7s ease-out;
+}
+
+/* User circle */
+header div[style*="border-radius: 50%"] {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+header div[style*="border-radius: 50%"]:hover {
+  transform: scale(1.1) rotate(5deg);
+  box-shadow: 0 8px 25px rgba(37, 99, 235, 0.35);
+}
+
+/* =========================================================
+   CONTENT
+   ========================================================= */
+
+main > div {
+  position: relative;
+  z-index: 2;
+}
+
+/* Page heading animation */
+h2 {
+  animation: headingSlide 0.7s ease-out;
+}
+
+h3 {
+  transition: color 0.25s ease;
+}
+
+/* =========================================================
+   CARDS
+   ========================================================= */
+
+section {
+  position: relative;
+}
+
+/* Every major card */
+section > div {
+  transition:
+    transform 0.3s ease,
+    box-shadow 0.3s ease,
+    border-color 0.3s ease;
+}
+
+/* Dashboard cards */
+section[style*="grid"] > div {
+  animation: cardAppear 0.7s ease both;
+}
+
+/* Stagger cards */
+section[style*="grid"] > div:nth-child(1) {
+  animation-delay: 0.05s;
+}
+
+section[style*="grid"] > div:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+section[style*="grid"] > div:nth-child(3) {
+  animation-delay: 0.25s;
+}
+
+section[style*="grid"] > div:nth-child(4) {
+  animation-delay: 0.35s;
+}
+
+/* Card hover */
+section[style*="grid"] > div:hover {
+  transform: translateY(-7px) !important;
+  box-shadow:
+    0 15px 35px rgba(37, 99, 235, 0.12) !important;
+  border-color: rgba(37, 99, 235, 0.25) !important;
+}
+
+/* =========================================================
+   UPLOAD BUTTON
+   ========================================================= */
+
+button {
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease,
+    filter 0.25s ease;
+}
+
+button:hover {
+  filter: brightness(1.05);
+}
+
+button[style*="background: rgb(37, 99, 235)"] {
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.22);
+}
+
+button[style*="background: rgb(37, 99, 235)"]:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.32) !important;
+}
+
+button[style*="background: rgb(37, 99, 235)"]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 70%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.35),
+    transparent
+  );
+  transform: skewX(-20deg);
+}
+
+button[style*="background: rgb(37, 99, 235)"]:hover::after {
+  animation: buttonShine 0.8s ease;
+}
+
+/* =========================================================
+   QUALITY SCORE
+   ========================================================= */
+
+div[style*="font-size: 52px"] {
+  animation: scorePop 0.9s ease-out;
+}
+
+/* =========================================================
+   PROGRESS BAR
+   ========================================================= */
+
+div[style*="height: 8px"] > div,
+div[style*="height: 9px"] > div {
+  animation: progressGrow 1.4s ease-out;
+  transform-origin: left center;
+}
+
+/* =========================================================
+   DRIFT / UPLOAD BOX
+   ========================================================= */
+
+div[style*="border: 1px dashed"] {
+  animation: softFloat 4s ease-in-out infinite;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+div[style*="border: 1px dashed"]:hover {
+  border-color: #2563eb !important;
+  box-shadow:
+    0 12px 30px rgba(37, 99, 235, 0.1);
+  transform: translateY(-4px);
+}
+
+/* Upload arrow */
+div[style*="border: 1px dashed"] > div:first-child {
+  animation: uploadBounce 1.8s ease-in-out infinite;
+}
+
+/* =========================================================
+   TABLE
+   ========================================================= */
+
+table tbody tr {
+  transition:
+    background 0.25s ease,
+    transform 0.25s ease;
+}
+
+table tbody tr:hover {
+  background: #f5f8ff;
+  transform: translateX(4px);
+}
+
+/* =========================================================
+   BADGES
+   ========================================================= */
+
+span {
+  transition: transform 0.2s ease;
+}
+
+/* =========================================================
+   SCROLLBAR
+   ========================================================= */
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #edf1f7;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #9fb1cf;
+  border-radius: 20px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2563eb;
+}
+
+/* =========================================================
+   KEYFRAMES
+   ========================================================= */
+
+@keyframes sidebarAppear {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes logoAppear {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(-10deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes logoPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(37, 99, 235, 0);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 8px rgba(37, 99, 235, 0.08),
+      0 0 30px rgba(37, 99, 235, 0.25);
+  }
+}
+
+@keyframes topbarAppear {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes headingSlide {
+  from {
+    opacity: 0;
+    transform: translateX(-25px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes cardAppear {
+  from {
+    opacity: 0;
+    transform: translateY(25px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scorePop {
+  0% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+
+  70% {
+    transform: scale(1.08);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes progressGrow {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes buttonShine {
+  0% {
+    left: -120%;
+  }
+
+  100% {
+    left: 140%;
+  }
+}
+
+@keyframes uploadBounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes softFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes backgroundFloat {
+  from {
+    transform: translate(0, 0) scale(1);
+  }
+
+  to {
+    transform: translate(-80px, 50px) scale(1.15);
+  }
+}
+
+@keyframes backgroundFloat2 {
+  from {
+    transform: translate(0, 0) scale(1);
+  }
+
+  to {
+    transform: translate(70px, -40px) scale(1.2);
+  }
+}
+
+/* =========================================================
+   PAGE LOAD EFFECT
+   ========================================================= */
+
+main {
+  animation: pageFade 0.6s ease-out;
+}
+
+@keyframes pageFade {
+  from {
+    opacity: 0.85;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* =========================================================
+   ACCESSIBILITY
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
