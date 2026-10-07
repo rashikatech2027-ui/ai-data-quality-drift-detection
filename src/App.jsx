@@ -1,14 +1,19 @@
 import React, { useRef, useState } from "react";
-import "./App.css";
 
 function App() {
   const fileInputRef = useRef(null);
+  const referenceInputRef = useRef(null);
+  const currentInputRef = useRef(null);
 
   const [page, setPage] = useState("dashboard");
+
   const [file, setFile] = useState(null);
   const [analysis, setAnalysis] = useState(null);
+
   const [referenceData, setReferenceData] = useState(null);
   const [referenceFile, setReferenceFile] = useState(null);
+
+  const [driftResult, setDriftResult] = useState(null);
 
   // =========================================================
   // CSV PARSER
@@ -21,9 +26,7 @@ function App() {
       .map((line) => line.trim())
       .filter((line) => line !== "");
 
-    if (lines.length === 0) {
-      return [];
-    }
+    if (lines.length === 0) return [];
 
     const parseLine = (line) => {
       const result = [];
@@ -49,7 +52,6 @@ function App() {
       }
 
       result.push(current.trim());
-
       return result;
     };
 
@@ -72,13 +74,11 @@ function App() {
   };
 
   // =========================================================
-  // DATA QUALITY FUNCTIONS
+  // DATA QUALITY
   // =========================================================
 
   const isMissing = (value) => {
-    if (value === null || value === undefined) {
-      return true;
-    }
+    if (value === null || value === undefined) return true;
 
     const valueString = String(value).trim().toLowerCase();
 
@@ -96,13 +96,9 @@ function App() {
       .map((row) => row[column])
       .filter((value) => !isMissing(value));
 
-    if (values.length === 0) {
-      return false;
-    }
+    if (values.length === 0) return false;
 
-    return values.every((value) => {
-      return !Number.isNaN(Number(value));
-    });
+    return values.every((value) => !Number.isNaN(Number(value)));
   };
 
   const getOutlierCount = (rows, column) => {
@@ -110,9 +106,7 @@ function App() {
       .map((row) => Number(row[column]))
       .filter((value) => !Number.isNaN(value));
 
-    if (values.length < 4) {
-      return 0;
-    }
+    if (values.length < 4) return 0;
 
     const sorted = [...values].sort((a, b) => a - b);
 
@@ -133,9 +127,7 @@ function App() {
   };
 
   const analyzeDataset = (rows) => {
-    if (!rows || rows.length === 0) {
-      return null;
-    }
+    if (!rows || rows.length === 0) return null;
 
     const columns = Object.keys(rows[0]);
 
@@ -213,16 +205,14 @@ function App() {
   };
 
   // =========================================================
-  // FILE UPLOAD
+  // FILE PROCESSING
   // =========================================================
 
   const processFile = (
     selectedFile,
     isReference = false
   ) => {
-    if (!selectedFile) {
-      return;
-    }
+    if (!selectedFile) return;
 
     if (!selectedFile.name.toLowerCase().endsWith(".csv")) {
       alert("Please upload a CSV file.");
@@ -265,11 +255,7 @@ function App() {
     reader.readAsText(selectedFile);
   };
 
-  const openFilePicker = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (event) => {
+  const handleCurrentUpload = (event) => {
     const selectedFile = event.target.files?.[0];
 
     if (selectedFile) {
@@ -290,12 +276,12 @@ function App() {
   };
 
   // =========================================================
-  // DATA DRIFT
+  // DRIFT CALCULATION
   // =========================================================
 
   const calculateDrift = () => {
     if (!analysis || !referenceData) {
-      return 0;
+      return null;
     }
 
     const currentRows = analysis.data;
@@ -304,7 +290,7 @@ function App() {
       currentRows.length === 0 ||
       referenceData.length === 0
     ) {
-      return 0;
+      return null;
     }
 
     const currentColumns = Object.keys(currentRows[0]);
@@ -314,13 +300,11 @@ function App() {
       (column) => referenceColumns.includes(column)
     );
 
-    if (commonColumns.length === 0) {
-      return 0;
-    }
+    if (commonColumns.length === 0) return null;
 
     let changedColumns = 0;
 
-    commonColumns.forEach((column) => {
+    const details = commonColumns.map((column) => {
       const currentValues = currentRows
         .map((row) => row[column])
         .filter((value) => !isMissing(value));
@@ -333,8 +317,15 @@ function App() {
         currentValues.length === 0 ||
         referenceValues.length === 0
       ) {
-        return;
+        return {
+          column,
+          difference: 0,
+          severity: "Low",
+          drift: false,
+        };
       }
+
+      let difference = 0;
 
       if (
         isNumericColumn(currentRows, column) &&
@@ -355,13 +346,10 @@ function App() {
         const denominator =
           Math.abs(referenceMean) || 1;
 
-        const difference =
+        difference =
           Math.abs(currentMean - referenceMean) /
-          denominator;
-
-        if (difference > 0.2) {
-          changedColumns++;
-        }
+          denominator *
+          100;
       } else {
         const currentUnique = new Set(currentValues);
         const referenceUnique = new Set(referenceValues);
@@ -374,50 +362,108 @@ function App() {
           }
         });
 
-        if (different > 0) {
-          changedColumns++;
-        }
+        difference =
+          (different /
+            Math.max(currentUnique.size, 1)) *
+          100;
       }
+
+      let severity = "Low";
+      let drift = false;
+
+      if (difference >= 40) {
+        severity = "High";
+        drift = true;
+      } else if (difference >= 20) {
+        severity = "Medium";
+        drift = true;
+      }
+
+      if (drift) changedColumns++;
+
+      return {
+        column,
+        difference: Number(difference.toFixed(1)),
+        severity,
+        drift,
+      };
     });
 
-    return Number(
+    const driftPercentage = Number(
       (
         (changedColumns / commonColumns.length) *
         100
       ).toFixed(1)
     );
+
+    return {
+      driftPercentage,
+      changedColumns,
+      totalColumns: commonColumns.length,
+      details,
+    };
   };
 
-  const driftScore = calculateDrift();
+  const runDriftAnalysis = () => {
+    const result = calculateDrift();
+
+    if (!result) {
+      alert(
+        "Please upload both Reference and Current datasets first."
+      );
+      return;
+    }
+
+    setDriftResult(result);
+    setPage("drift");
+  };
 
   // =========================================================
   // NAVIGATION
   // =========================================================
 
-  const navigate = (targetPage) => {
-    setPage(targetPage);
+  const navigate = (target) => {
+    setPage(target);
   };
 
   // =========================================================
-  // INLINE CSS
+  // COLORS
+  // =========================================================
+
+  const colors = {
+    bg: "#060A13",
+    sidebar: "#080D18",
+    card: "#0D1524",
+    card2: "#101A2B",
+    border: "#1B2940",
+    text: "#F4F7FF",
+    muted: "#8997AD",
+    blue: "#3B82F6",
+    purple: "#8B5CF6",
+    green: "#34D399",
+    yellow: "#FBBF24",
+    red: "#F87171",
+  };
+
+  // =========================================================
+  // STYLES
   // =========================================================
 
   const styles = {
     app: {
       minHeight: "100vh",
       display: "flex",
-      background: "#f4f7fb",
-      color: "#14213d",
+      background: colors.bg,
+      color: colors.text,
       fontFamily:
         "Inter, Segoe UI, Arial, sans-serif",
-      overflow: "hidden",
     },
 
     sidebar: {
       width: "250px",
       background:
-        "linear-gradient(180deg, #0b1629 0%, #101d35 100%)",
-      color: "#fff",
+        "linear-gradient(180deg, #080D18 0%, #0B1220 100%)",
+      borderRight: `1px solid ${colors.border}`,
       minHeight: "100vh",
       padding: "24px 18px",
       boxSizing: "border-box",
@@ -426,8 +472,6 @@ function App() {
       top: 0,
       bottom: 0,
       zIndex: 20,
-      boxShadow:
-        "8px 0 30px rgba(15, 23, 42, 0.08)",
     },
 
     logoRow: {
@@ -441,72 +485,93 @@ function App() {
       width: "46px",
       height: "46px",
       background:
-        "linear-gradient(135deg, #2563eb, #60a5fa)",
-      borderRadius: "12px",
+        "linear-gradient(135deg, #2563EB, #7C3AED)",
+      borderRadius: "14px",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       fontWeight: 800,
       fontSize: "20px",
       boxShadow:
-        "0 8px 22px rgba(37, 99, 235, 0.35)",
-      animation: "floatLogo 3s ease-in-out infinite",
+        "0 0 25px rgba(59,130,246,0.35)",
     },
 
     logoTitle: {
       fontSize: "20px",
       fontWeight: 800,
+      color: "#F8FAFF",
     },
 
     logoSubtitle: {
-      fontSize: "13px",
-      color: "#9aa8c2",
+      fontSize: "12px",
+      color: "#718096",
       marginTop: "2px",
     },
 
     menuTitle: {
-      color: "#75839d",
-      fontSize: "12px",
+      color: "#5F6E84",
+      fontSize: "11px",
       fontWeight: 700,
-      letterSpacing: "1px",
-      marginBottom: "12px",
+      letterSpacing: "1.5px",
+      margin: "20px 0 12px",
     },
 
     navButton: {
       width: "100%",
-      border: "none",
+      border: "1px solid transparent",
       background: "transparent",
-      color: "#dce5f5",
+      color: "#9AA8BE",
       padding: "13px 14px",
-      borderRadius: "10px",
+      borderRadius: "11px",
       textAlign: "left",
       cursor: "pointer",
-      fontSize: "15px",
+      fontSize: "14px",
       marginBottom: "5px",
-      transition:
-        "all 0.25s ease",
+      transition: "all 0.25s ease",
     },
 
     activeNav: {
       background:
-        "linear-gradient(90deg, #293f67, #263b5d)",
-      color: "#fff",
+        "linear-gradient(90deg, rgba(37,99,235,0.23), rgba(124,58,237,0.15))",
+      color: "#FFFFFF",
+      border:
+        "1px solid rgba(59,130,246,0.25)",
       boxShadow:
-        "0 8px 20px rgba(0, 0, 0, 0.15)",
-      transform: "translateX(3px)",
+        "0 0 20px rgba(37,99,235,0.10)",
+    },
+
+    systemBox: {
+      marginTop: "25px",
+      padding: "14px",
+      borderRadius: "12px",
+      background: "#0B1321",
+      border: `1px solid ${colors.border}`,
+    },
+
+    systemDot: {
+      width: "8px",
+      height: "8px",
+      borderRadius: "50%",
+      background: colors.green,
+      display: "inline-block",
+      marginRight: "8px",
+      boxShadow:
+        "0 0 10px rgba(52,211,153,0.7)",
     },
 
     main: {
       marginLeft: "250px",
       width: "calc(100% - 250px)",
       minHeight: "100vh",
+      background:
+        "radial-gradient(circle at 80% 0%, rgba(37,99,235,0.08), transparent 30%), #060A13",
     },
 
     topbar: {
-      height: "86px",
-      background: "rgba(255,255,255,0.94)",
-      backdropFilter: "blur(12px)",
-      borderBottom: "1px solid #e5eaf2",
+      height: "82px",
+      background: "rgba(8,13,25,0.88)",
+      backdropFilter: "blur(16px)",
+      borderBottom: `1px solid ${colors.border}`,
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
@@ -518,15 +583,16 @@ function App() {
     },
 
     breadcrumb: {
-      color: "#8492aa",
-      fontSize: "14px",
-      marginBottom: "4px",
+      color: "#66758B",
+      fontSize: "13px",
+      marginBottom: "5px",
     },
 
     topTitle: {
-      fontSize: "25px",
+      fontSize: "22px",
       fontWeight: 750,
       margin: 0,
+      color: "#F1F5FF",
     },
 
     userArea: {
@@ -535,25 +601,31 @@ function App() {
       gap: "12px",
     },
 
+    online: {
+      color: colors.green,
+      fontSize: "12px",
+      marginRight: "15px",
+    },
+
     userCircle: {
       width: "40px",
       height: "40px",
       borderRadius: "50%",
       background:
-        "linear-gradient(135deg, #2563eb, #3b82f6)",
+        "linear-gradient(135deg, #2563EB, #7C3AED)",
       color: "#fff",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       fontWeight: 700,
       boxShadow:
-        "0 5px 16px rgba(37,99,235,0.25)",
+        "0 0 18px rgba(59,130,246,0.25)",
     },
 
     content: {
       padding: "30px 34px 50px",
-      animation:
-        "pageEnter 0.45s ease",
+      maxWidth: "1500px",
+      margin: "0 auto",
     },
 
     pageIntro: {
@@ -568,106 +640,114 @@ function App() {
       fontSize: "30px",
       margin: "0 0 8px",
       letterSpacing: "-0.5px",
+      color: "#F8FAFF",
     },
 
     pageDescription: {
-      color: "#66758f",
-      fontSize: "16px",
+      color: "#8492A8",
+      fontSize: "15px",
       margin: 0,
       lineHeight: 1.5,
     },
 
     datasetName: {
-      color: "#66758f",
+      color: "#6F7E95",
       marginTop: "8px",
+      fontSize: "13px",
     },
 
     uploadButton: {
       background:
-        "linear-gradient(135deg, #2563eb, #3b82f6)",
+        "linear-gradient(135deg, #2563EB, #7C3AED)",
       color: "#fff",
       border: "none",
-      borderRadius: "10px",
+      borderRadius: "11px",
       padding: "13px 20px",
       cursor: "pointer",
       fontWeight: 650,
       fontSize: "14px",
       boxShadow:
-        "0 8px 20px rgba(37,99,235,0.25)",
-      transition:
-        "all 0.25s ease",
+        "0 8px 25px rgba(37,99,235,0.22)",
     },
 
     cards: {
       display: "grid",
       gridTemplateColumns:
-        "repeat(auto-fit, minmax(220px, 1fr))",
+        "repeat(auto-fit, minmax(210px, 1fr))",
       gap: "18px",
       marginBottom: "22px",
     },
 
     card: {
-      background: "#fff",
-      border: "1px solid #e5eaf2",
-      borderRadius: "14px",
+      background:
+        "linear-gradient(145deg, #0D1524, #0A111E)",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "16px",
       padding: "22px",
       boxSizing: "border-box",
       boxShadow:
-        "0 4px 18px rgba(24, 45, 80, 0.05)",
-      transition:
-        "transform 0.3s ease, box-shadow 0.3s ease",
-      animation:
-        "cardEnter 0.55s ease both",
+        "0 8px 30px rgba(0,0,0,0.22)",
     },
 
     cardTop: {
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
-      color: "#65758f",
-      fontSize: "14px",
+      color: "#8B98AE",
+      fontSize: "13px",
       marginBottom: "18px",
+    },
+
+    cardIcon: {
+      width: "34px",
+      height: "34px",
+      borderRadius: "10px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "rgba(59,130,246,0.12)",
+      color: colors.blue,
     },
 
     cardValue: {
       fontSize: "32px",
       fontWeight: 750,
       margin: "0 0 8px",
+      color: "#F4F7FF",
     },
 
     muted: {
-      color: "#8996aa",
+      color: "#69788F",
       fontSize: "13px",
     },
 
     good: {
-      color: "#00a65a",
+      color: colors.green,
       fontSize: "13px",
       fontWeight: 600,
     },
 
     warning: {
-      color: "#ff6500",
+      color: colors.yellow,
       fontSize: "13px",
       fontWeight: 600,
     },
 
     danger: {
-      color: "#ef4444",
+      color: colors.red,
       fontSize: "13px",
       fontWeight: 600,
     },
 
     panel: {
-      background: "#fff",
-      border: "1px solid #e5eaf2",
-      borderRadius: "14px",
+      background:
+        "linear-gradient(145deg, #0D1524, #0A111E)",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "16px",
       padding: "24px",
       marginBottom: "22px",
       boxShadow:
-        "0 4px 18px rgba(24, 45, 80, 0.05)",
-      animation:
-        "cardEnter 0.6s ease both",
+        "0 8px 30px rgba(0,0,0,0.20)",
     },
 
     panelHeader: {
@@ -679,11 +759,12 @@ function App() {
 
     panelTitle: {
       margin: 0,
-      fontSize: "20px",
+      fontSize: "19px",
+      color: "#F1F5FF",
     },
 
     panelText: {
-      color: "#8a97ab",
+      color: "#77859C",
       marginTop: "6px",
       fontSize: "13px",
     },
@@ -692,27 +773,97 @@ function App() {
       display: "grid",
       gridTemplateColumns:
         "repeat(auto-fit, minmax(180px, 1fr))",
-      gap: "18px",
+      gap: "16px",
     },
 
     statBox: {
-      border: "1px solid #e6ebf3",
-      borderRadius: "12px",
-      padding: "20px",
-      background: "#fff",
-      transition:
-        "all 0.25s ease",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "13px",
+      padding: "18px",
+      background: "#0B1321",
     },
 
     statLabel: {
-      color: "#65758f",
-      fontSize: "14px",
-      marginBottom: "12px",
+      color: "#78869C",
+      fontSize: "13px",
+      marginBottom: "10px",
     },
 
     statValue: {
-      fontSize: "29px",
+      fontSize: "27px",
       fontWeight: 750,
+      color: "#F1F5FF",
+    },
+
+    progressOuter: {
+      width: "100%",
+      height: "7px",
+      background: "#1A2638",
+      borderRadius: "10px",
+      overflow: "hidden",
+      marginTop: "12px",
+    },
+
+    progressInner: {
+      height: "100%",
+      background:
+        "linear-gradient(90deg, #2563EB, #8B5CF6)",
+      borderRadius: "10px",
+      transition: "width 1s ease",
+      boxShadow:
+        "0 0 12px rgba(59,130,246,0.45)",
+    },
+
+    chartGrid: {
+      display: "grid",
+      gridTemplateColumns:
+        "repeat(auto-fit, minmax(320px, 1fr))",
+      gap: "20px",
+    },
+
+    chartBox: {
+      background: "#0A111E",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "13px",
+      padding: "20px",
+    },
+
+    barRow: {
+      display: "flex",
+      alignItems: "center",
+      gap: "12px",
+      marginBottom: "15px",
+    },
+
+    barLabel: {
+      width: "125px",
+      fontSize: "12px",
+      color: "#9AA8BE",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    },
+
+    barTrack: {
+      flex: 1,
+      height: "8px",
+      background: "#172235",
+      borderRadius: "10px",
+      overflow: "hidden",
+    },
+
+    barFill: {
+      height: "100%",
+      background:
+        "linear-gradient(90deg, #3B82F6, #8B5CF6)",
+      borderRadius: "10px",
+    },
+
+    barNumber: {
+      width: "40px",
+      fontSize: "12px",
+      color: "#DCE5F4",
+      textAlign: "right",
     },
 
     table: {
@@ -722,112 +873,183 @@ function App() {
 
     th: {
       textAlign: "left",
-      color: "#64748b",
-      fontSize: "14px",
-      padding: "14px",
-      borderBottom: "1px solid #e6ebf2",
+      color: "#718096",
+      fontSize: "12px",
+      padding: "13px",
+      borderBottom: `1px solid ${colors.border}`,
     },
 
     td: {
-      padding: "15px 14px",
-      borderBottom: "1px solid #edf0f5",
-      fontSize: "14px",
+      padding: "14px 13px",
+      borderBottom: "1px solid #151F30",
+      fontSize: "13px",
+      color: "#D9E2F2",
     },
 
     badge: {
       display: "inline-block",
-      padding: "7px 12px",
+      padding: "6px 11px",
       borderRadius: "20px",
-      background: "#eef2f7",
-      color: "#526176",
-      fontSize: "12px",
+      background: "#172235",
+      color: "#9AA8BE",
+      fontSize: "11px",
       fontWeight: 650,
     },
 
     healthyBadge: {
       display: "inline-block",
-      padding: "6px 12px",
+      padding: "6px 11px",
       borderRadius: "20px",
-      background: "#e8f9ef",
-      color: "#00894b",
-      fontSize: "12px",
+      background: "rgba(52,211,153,0.10)",
+      color: colors.green,
+      fontSize: "11px",
       fontWeight: 700,
     },
 
     attentionBadge: {
       display: "inline-block",
-      padding: "6px 12px",
+      padding: "6px 11px",
       borderRadius: "20px",
-      background: "#fff2df",
-      color: "#c95d00",
-      fontSize: "12px",
+      background: "rgba(251,191,36,0.10)",
+      color: colors.yellow,
+      fontSize: "11px",
       fontWeight: 700,
     },
 
-    scoreBox: {
-      background: "#fff",
-      border: "1px solid #e5eaf2",
-      borderRadius: "14px",
-      padding: "20px 26px",
-      minWidth: "145px",
-      display: "flex",
-      flexDirection: "column",
-      gap: "5px",
-      boxShadow:
-        "0 5px 18px rgba(24,45,80,0.05)",
+    highBadge: {
+      display: "inline-block",
+      padding: "6px 11px",
+      borderRadius: "20px",
+      background: "rgba(248,113,113,0.10)",
+      color: colors.red,
+      fontSize: "11px",
+      fontWeight: 700,
     },
 
-    progressOuter: {
-      width: "100%",
-      height: "8px",
-      background: "#e8edf4",
-      borderRadius: "10px",
-      overflow: "hidden",
-      marginTop: "12px",
+    mediumBadge: {
+      display: "inline-block",
+      padding: "6px 11px",
+      borderRadius: "20px",
+      background: "rgba(251,191,36,0.10)",
+      color: colors.yellow,
+      fontSize: "11px",
+      fontWeight: 700,
     },
 
-    progressInner: {
-      height: "100%",
-      background:
-        "linear-gradient(90deg, #2563eb, #60a5fa)",
-      borderRadius: "10px",
-      transition:
-        "width 1s ease",
-    },
-
-    driftBox: {
-      border: "1px dashed #cbd5e1",
-      borderRadius: "14px",
-      padding: "55px 25px",
+    uploadArea: {
+      border: "1px dashed #33445F",
+      borderRadius: "16px",
+      padding: "50px 25px",
       textAlign: "center",
       background:
-        "linear-gradient(135deg, #f9fbfd, #f3f7ff)",
+        "linear-gradient(145deg, #0A111E, #0D1625)",
+      cursor: "pointer",
     },
 
-    reportGrid: {
-      display: "grid",
-      gridTemplateColumns:
-        "repeat(auto-fit, minmax(150px, 1fr))",
-      gap: "20px",
+    uploadIcon: {
+      width: "64px",
+      height: "64px",
+      borderRadius: "18px",
+      background:
+        "linear-gradient(135deg, rgba(37,99,235,0.18), rgba(124,58,237,0.18))",
+      color: colors.blue,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: "28px",
+      margin: "0 auto 18px",
     },
 
-    note: {
-      marginTop: "25px",
-      padding: "17px",
-      background: "#eef5ff",
-      color: "#2455a6",
+    uploadTitle: {
+      fontSize: "20px",
+      color: "#F1F5FF",
+      marginBottom: "8px",
+    },
+
+    uploadText: {
+      color: "#718096",
+      fontSize: "13px",
+      marginBottom: "22px",
+    },
+
+    emptyState: {
+      padding: "55px 20px",
+      textAlign: "center",
+      color: "#718096",
+    },
+
+    alertItem: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "15px",
+      padding: "15px",
+      background: "#0B1321",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "12px",
+      marginBottom: "10px",
+    },
+
+    alertLeft: {
+      display: "flex",
+      alignItems: "center",
+      gap: "12px",
+    },
+
+    alertIcon: {
+      width: "36px",
+      height: "36px",
       borderRadius: "10px",
-      fontSize: "14px",
-      lineHeight: 1.5,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "rgba(248,113,113,0.10)",
+      color: colors.red,
+    },
+
+    reportCard: {
+      padding: "22px",
+      background: "#0B1321",
+      border: `1px solid ${colors.border}`,
+      borderRadius: "13px",
+    },
+
+    smallButton: {
+      border: `1px solid ${colors.border}`,
+      background: "#111B2C",
+      color: "#DCE5F4",
+      borderRadius: "9px",
+      padding: "9px 13px",
+      cursor: "pointer",
+      fontSize: "12px",
+    },
+
+    successButton: {
+      border: "none",
+      background:
+        "linear-gradient(135deg, #059669, #10B981)",
+      color: "#fff",
+      borderRadius: "9px",
+      padding: "10px 15px",
+      cursor: "pointer",
+      fontSize: "12px",
+      fontWeight: 650,
     },
   };
 
   // =========================================================
-  // DASHBOARD
+  // DASHBOARD PAGE
   // =========================================================
 
-  const renderDashboardPage = () => {
+  const renderDashboard = () => {
     const hasAnalysis = !!analysis;
+    const quality = hasAnalysis
+      ? analysis.qualityScore
+      : 0;
+
+    const drift = driftResult
+      ? driftResult.driftPercentage
+      : 0;
 
     return (
       <>
@@ -854,7 +1076,7 @@ function App() {
 
           <button
             style={styles.uploadButton}
-            onClick={openFilePicker}
+            onClick={() => navigate("upload")}
           >
             + Upload Dataset
           </button>
@@ -864,12 +1086,15 @@ function App() {
           <div style={styles.card}>
             <div style={styles.cardTop}>
               <span>Data Quality Score</span>
-              <span>✓</span>
+
+              <div style={styles.cardIcon}>
+                ✓
+              </div>
             </div>
 
             <h3 style={styles.cardValue}>
               {hasAnalysis
-                ? `${analysis.qualityScore}%`
+                ? `${quality}%`
                 : "—"}
             </h3>
 
@@ -878,7 +1103,7 @@ function App() {
                 <div
                   style={{
                     ...styles.progressInner,
-                    width: `${analysis.qualityScore}%`,
+                    width: `${quality}%`,
                   }}
                 />
               </div>
@@ -892,241 +1117,346 @@ function App() {
               }
             >
               {hasAnalysis
-                ? "Calculated from uploaded dataset"
-                : "Upload a dataset to begin"}
+                ? quality >= 80
+                  ? "Good quality"
+                  : "Needs attention"
+                : "Upload dataset to begin"}
             </p>
           </div>
 
           <div style={styles.card}>
             <div style={styles.cardTop}>
               <span>Data Drift</span>
-              <span>↗</span>
+
+              <div
+                style={{
+                  ...styles.cardIcon,
+                  color: colors.purple,
+                  background:
+                    "rgba(139,92,246,0.12)",
+                }}
+              >
+                ↗
+              </div>
             </div>
 
             <h3 style={styles.cardValue}>
-              {referenceData
-                ? `${driftScore}%`
+              {driftResult
+                ? `${drift}%`
                 : "0.0%"}
-            </h3>
-
-            <p style={styles.good}>
-              {referenceData
-                ? "Drift calculated"
-                : "Awaiting reference dataset"}
-            </p>
-
-            {!referenceData && (
-              <p style={styles.muted}>
-                Upload reference data for comparison
-              </p>
-            )}
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.cardTop}>
-              <span>Missing Values</span>
-              <span>!</span>
-            </div>
-
-            <h3 style={styles.cardValue}>
-              {hasAnalysis
-                ? analysis.missingValues
-                : 0}
             </h3>
 
             <p
               style={
-                hasAnalysis &&
-                analysis.missingValues > 0
+                drift > 20
                   ? styles.warning
                   : styles.good
               }
             >
-              {hasAnalysis &&
-              analysis.missingValues > 0
-                ? "Needs attention"
-                : "No missing values"}
+              {driftResult
+                ? drift > 20
+                  ? "Drift detected"
+                  : "Stable"
+                : "No drift analysis yet"}
             </p>
           </div>
 
           <div style={styles.card}>
             <div style={styles.cardTop}>
-              <span>Total Issues</span>
-              <span>!</span>
+              <span>Data Issues</span>
+
+              <div
+                style={{
+                  ...styles.cardIcon,
+                  color: colors.yellow,
+                  background:
+                    "rgba(251,191,36,0.10)",
+                }}
+              >
+                !
+              </div>
             </div>
 
             <h3 style={styles.cardValue}>
               {hasAnalysis
                 ? analysis.totalIssues
-                : 0}
+                : "—"}
             </h3>
 
-            <p
-              style={
-                hasAnalysis &&
-                analysis.totalIssues > 0
-                  ? styles.danger
-                  : styles.good
-              }
-            >
-              {hasAnalysis &&
-              analysis.totalIssues > 0
+            <p style={styles.warning}>
+              {hasAnalysis
                 ? "Issues detected"
-                : "No issues detected"}
+                : "Awaiting dataset"}
+            </p>
+          </div>
+
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              <span>Dataset Size</span>
+
+              <div style={styles.cardIcon}>
+                #
+              </div>
+            </div>
+
+            <h3 style={styles.cardValue}>
+              {hasAnalysis
+                ? analysis.rows
+                : "—"}
+            </h3>
+
+            <p style={styles.muted}>
+              {hasAnalysis
+                ? `${analysis.columns} columns`
+                : "No data loaded"}
             </p>
           </div>
         </section>
 
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>
-            <div>
-              <h3 style={styles.panelTitle}>
-                Uploaded Dataset
-              </h3>
+        {hasAnalysis ? (
+          <>
+            <div style={styles.chartGrid}>
+              <div style={styles.panel}>
+                <div style={styles.panelHeader}>
+                  <div>
+                    <h3 style={styles.panelTitle}>
+                      Quality Overview
+                    </h3>
+                    <p style={styles.panelText}>
+                      Data quality dimensions
+                    </p>
+                  </div>
+                </div>
 
-              <p style={styles.panelText}>
-                {hasAnalysis
-                  ? "Dataset successfully processed."
-                  : "No dataset has been uploaded yet."}
-              </p>
+                <div style={styles.chartBox}>
+                  {[
+                    ["Completeness", Math.max(0, 100 - analysis.missingValues)],
+                    ["Validity", Math.max(0, 100 - analysis.totalIssues)],
+                    ["Consistency", Math.max(0, 100 - analysis.duplicateValues * 5)],
+                    ["Uniqueness", Math.max(0, 100 - analysis.duplicateValues * 5)],
+                    ["Outlier Health", Math.max(0, 100 - analysis.outlierValues)],
+                  ].map(([label, value]) => (
+                    <div
+                      style={styles.barRow}
+                      key={label}
+                    >
+                      <span style={styles.barLabel}>
+                        {label}
+                      </span>
+
+                      <div style={styles.barTrack}>
+                        <div
+                          style={{
+                            ...styles.barFill,
+                            width: `${Math.min(
+                              100,
+                              value
+                            )}%`,
+                          }}
+                        />
+                      </div>
+
+                      <span style={styles.barNumber}>
+                        {Math.round(value)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={styles.panel}>
+                <div style={styles.panelHeader}>
+                  <div>
+                    <h3 style={styles.panelTitle}>
+                      Dataset Summary
+                    </h3>
+                    <p style={styles.panelText}>
+                      Current dataset statistics
+                    </p>
+                  </div>
+                </div>
+
+                <div style={styles.statGrid}>
+                  <div style={styles.statBox}>
+                    <div style={styles.statLabel}>
+                      Rows
+                    </div>
+                    <div style={styles.statValue}>
+                      {analysis.rows}
+                    </div>
+                  </div>
+
+                  <div style={styles.statBox}>
+                    <div style={styles.statLabel}>
+                      Columns
+                    </div>
+                    <div style={styles.statValue}>
+                      {analysis.columns}
+                    </div>
+                  </div>
+
+                  <div style={styles.statBox}>
+                    <div style={styles.statLabel}>
+                      Missing
+                    </div>
+                    <div
+                      style={{
+                        ...styles.statValue,
+                        color:
+                          analysis.missingValues > 0
+                            ? colors.yellow
+                            : colors.green,
+                      }}
+                    >
+                      {analysis.missingValues}
+                    </div>
+                  </div>
+
+                  <div style={styles.statBox}>
+                    <div style={styles.statLabel}>
+                      Outliers
+                    </div>
+                    <div
+                      style={{
+                        ...styles.statValue,
+                        color:
+                          analysis.outlierValues > 0
+                            ? colors.red
+                            : colors.green,
+                      }}
+                    >
+                      {analysis.outlierValues}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <span style={styles.badge}>
-              CSV Processed
-            </span>
-          </div>
-
-          <div style={styles.statGrid}>
-            <div style={styles.statBox}>
-              <div style={styles.statLabel}>
-                Total Rows
-              </div>
-
-              <div style={styles.statValue}>
-                {hasAnalysis
-                  ? analysis.rows
-                  : 0}
-              </div>
-            </div>
-
-            <div style={styles.statBox}>
-              <div style={styles.statLabel}>
-                Total Columns
-              </div>
-
-              <div style={styles.statValue}>
-                {hasAnalysis
-                  ? analysis.columns
-                  : 0}
-              </div>
-            </div>
-
-            <div style={styles.statBox}>
-              <div style={styles.statLabel}>
-                Duplicate Rows
-              </div>
-
-              <div style={styles.statValue}>
-                {hasAnalysis
-                  ? analysis.duplicateValues
-                  : 0}
-              </div>
-            </div>
-
-            <div style={styles.statBox}>
-              <div style={styles.statLabel}>
-                Outliers
-              </div>
-
-              <div style={styles.statValue}>
-                {hasAnalysis
-                  ? analysis.outlierValues
-                  : 0}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {hasAnalysis && (
-          <section style={styles.cards}>
             <div style={styles.panel}>
-              <h3 style={styles.panelTitle}>
-                Data Quality Trend
-              </h3>
+              <div style={styles.panelHeader}>
+                <div>
+                  <h3 style={styles.panelTitle}>
+                    Data Quality Alerts
+                  </h3>
+                  <p style={styles.panelText}>
+                    Important issues found in your dataset
+                  </p>
+                </div>
+              </div>
 
-              <p style={styles.panelText}>
-                Current dataset quality score.
-              </p>
+              {analysis.totalIssues === 0 ? (
+                <div style={styles.emptyState}>
+                  ✓ No major data quality issues detected.
+                </div>
+              ) : (
+                <>
+                  {analysis.missingValues > 0 && (
+                    <div style={styles.alertItem}>
+                      <div style={styles.alertLeft}>
+                        <div style={styles.alertIcon}>
+                          !
+                        </div>
 
-              <div
+                        <div>
+                          <strong>
+                            Missing values detected
+                          </strong>
+
+                          <div style={styles.panelText}>
+                            {analysis.missingValues} missing
+                            value(s) found
+                          </div>
+                        </div>
+                      </div>
+
+                      <span style={styles.attentionBadge}>
+                        Attention
+                      </span>
+                    </div>
+                  )}
+
+                  {analysis.outlierValues > 0 && (
+                    <div style={styles.alertItem}>
+                      <div style={styles.alertLeft}>
+                        <div style={styles.alertIcon}>
+                          !
+                        </div>
+
+                        <div>
+                          <strong>
+                            Outliers detected
+                          </strong>
+
+                          <div style={styles.panelText}>
+                            {analysis.outlierValues} potential
+                            outlier(s)
+                          </div>
+                        </div>
+                      </div>
+
+                      <span style={styles.highBadge}>
+                        Review
+                      </span>
+                    </div>
+                  )}
+
+                  {analysis.duplicateValues > 0 && (
+                    <div style={styles.alertItem}>
+                      <div style={styles.alertLeft}>
+                        <div style={styles.alertIcon}>
+                          !
+                        </div>
+
+                        <div>
+                          <strong>
+                            Duplicate records
+                          </strong>
+
+                          <div style={styles.panelText}>
+                            {analysis.duplicateValues} duplicate
+                            record(s)
+                          </div>
+                        </div>
+                      </div>
+
+                      <span style={styles.attentionBadge}>
+                        Attention
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <div style={styles.panel}>
+            <div style={styles.emptyState}>
+              <div style={{ fontSize: "45px" }}>
+                📊
+              </div>
+
+              <h3
                 style={{
-                  textAlign: "center",
-                  marginTop: "35px",
+                  color: "#F1F5FF",
+                  marginBottom: "8px",
                 }}
               >
-                <div
-                  style={{
-                    fontSize: "52px",
-                    fontWeight: 800,
-                  }}
-                >
-                  {analysis.qualityScore}%
-                </div>
-
-                <div style={styles.muted}>
-                  Overall data quality score
-                </div>
-
-                <div style={styles.progressOuter}>
-                  <div
-                    style={{
-                      ...styles.progressInner,
-                      width: `${analysis.qualityScore}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div style={styles.panel}>
-              <h3 style={styles.panelTitle}>
-                Data Issues
+                No dataset uploaded
               </h3>
 
-              <p style={styles.panelText}>
-                Issues detected in latest dataset.
+              <p>
+                Upload a CSV dataset to start your
+                data-quality analysis.
               </p>
 
-              <div style={{ marginTop: "30px" }}>
-                <IssueBar
-                  label="Missing Values"
-                  value={analysis.missingValues}
-                  max={Math.max(
-                    analysis.totalIssues,
-                    1
-                  )}
-                />
-
-                <IssueBar
-                  label="Duplicates"
-                  value={analysis.duplicateValues}
-                  max={Math.max(
-                    analysis.totalIssues,
-                    1
-                  )}
-                />
-
-                <IssueBar
-                  label="Outliers"
-                  value={analysis.outlierValues}
-                  max={Math.max(
-                    analysis.totalIssues,
-                    1
-                  )}
-                />
-              </div>
+              <button
+                style={styles.uploadButton}
+                onClick={() => navigate("upload")}
+              >
+                Upload Dataset
+              </button>
             </div>
-          </section>
+          </div>
         )}
       </>
     );
@@ -1146,86 +1476,153 @@ function App() {
             </h2>
 
             <p style={styles.pageDescription}>
-              Upload a CSV dataset to start automatic
-              data quality analysis.
+              Upload a CSV dataset to analyze data
+              quality and detect potential issues.
             </p>
           </div>
         </div>
 
-        <section style={styles.panel}>
-          <div style={styles.driftBox}>
-            <div
-              style={{
-                fontSize: "45px",
-                marginBottom: "15px",
-                animation:
-                  "floatIcon 2s ease-in-out infinite",
-              }}
-            >
+        <div style={styles.panel}>
+          <div
+            style={styles.uploadArea}
+            onClick={() =>
+              currentInputRef.current?.click()
+            }
+          >
+            <div style={styles.uploadIcon}>
               ↑
             </div>
 
-            <h3 style={{ fontSize: "22px" }}>
-              Upload your CSV dataset
+            <h3 style={styles.uploadTitle}>
+              Upload Current Dataset
+            </h3>
+
+            <p style={styles.uploadText}>
+              Choose a CSV file from your computer.
+            </p>
+
+            <button
+              style={styles.uploadButton}
+              onClick={(event) => {
+                event.stopPropagation();
+                currentInputRef.current?.click();
+              }}
+            >
+              Choose CSV File
+            </button>
+
+            <input
+              ref={currentInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleCurrentUpload}
+              style={{ display: "none" }}
+            />
+          </div>
+        </div>
+
+        <div style={styles.chartGrid}>
+          <div style={styles.reportCard}>
+            <h3 style={styles.panelTitle}>
+              Current Dataset
             </h3>
 
             <p style={styles.panelText}>
-              Supported format: CSV
+              Used for quality analysis.
+            </p>
+
+            <div
+              style={{
+                marginTop: "18px",
+                color: "#DCE5F4",
+              }}
+            >
+              {file
+                ? `✓ ${file.name}`
+                : "No file selected"}
+            </div>
+          </div>
+
+          <div style={styles.reportCard}>
+            <h3 style={styles.panelTitle}>
+              Reference Dataset
+            </h3>
+
+            <p style={styles.panelText}>
+              Used as the baseline for drift analysis.
             </p>
 
             <button
               style={{
-                ...styles.uploadButton,
+                ...styles.smallButton,
                 marginTop: "15px",
               }}
-              onClick={openFilePicker}
+              onClick={() =>
+                referenceInputRef.current?.click()
+              }
             >
-              + Choose CSV File
+              Upload Reference CSV
             </button>
 
-            {file && (
-              <p style={{ marginTop: "20px" }}>
-                Current file:{" "}
-                <strong>{file.name}</strong>
-              </p>
-            )}
+            <input
+              ref={referenceInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleReferenceUpload}
+              style={{ display: "none" }}
+            />
+
+            <div
+              style={{
+                marginTop: "12px",
+                color: "#DCE5F4",
+                fontSize: "13px",
+              }}
+            >
+              {referenceFile
+                ? `✓ ${referenceFile.name}`
+                : "No reference file"}
+            </div>
           </div>
-        </section>
+        </div>
       </>
     );
   };
 
   // =========================================================
-  // QUALITY PAGE
+  // DATA QUALITY PAGE
   // =========================================================
 
   const renderQualityPage = () => {
     if (!analysis) {
       return (
-        <section style={styles.panel}>
-          <div style={styles.driftBox}>
-            <div style={{ fontSize: "40px" }}>
-              📊
+        <div style={styles.panel}>
+          <div style={styles.emptyState}>
+            <div style={{ fontSize: "45px" }}>
+              🔍
             </div>
 
-            <h2>No Dataset Analyzed Yet</h2>
+            <h3
+              style={{
+                color: "#F1F5FF",
+              }}
+            >
+              No dataset available
+            </h3>
 
-            <p style={styles.panelText}>
-              Upload a CSV dataset to see detailed
-              data quality analysis.
+            <p>
+              Upload a CSV dataset to view detailed
+              quality analysis.
             </p>
 
             <button
-              style={{
-                ...styles.uploadButton,
-                marginTop: "15px",
-              }}
-              onClick={openFilePicker}
+              style={styles.uploadButton}
+              onClick={() => navigate("upload")}
             >
-              + Upload Dataset
+              Upload Dataset
             </button>
           </div>
-        </section>
+        </div>
       );
     }
 
@@ -1234,103 +1631,112 @@ function App() {
         <div style={styles.pageIntro}>
           <div>
             <h2 style={styles.pageHeading}>
-              Data Quality Analysis
+              Data Quality
             </h2>
 
             <p style={styles.pageDescription}>
-              Detailed quality assessment of your
-              uploaded dataset.
-            </p>
-
-            <p style={styles.datasetName}>
-              Dataset:{" "}
-              <strong>{file?.name}</strong>
+              Detailed quality analysis of your uploaded
+              dataset.
             </p>
           </div>
 
-          <div style={styles.scoreBox}>
-            <span>Overall Quality</span>
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Overall Quality
+            </div>
 
-            <strong style={{ fontSize: "25px" }}>
+            <div style={styles.cardValue}>
               {analysis.qualityScore}%
-            </strong>
+            </div>
 
-            <span
-              style={
-                analysis.qualityScore >= 90
-                  ? styles.good
-                  : analysis.qualityScore >= 75
-                  ? styles.warning
-                  : styles.danger
-              }
-            >
-              {analysis.qualityScore >= 90
-                ? "Excellent"
-                : analysis.qualityScore >= 75
-                ? "Good"
-                : "Needs Attention"}
-            </span>
+            <div style={styles.progressOuter}>
+              <div
+                style={{
+                  ...styles.progressInner,
+                  width: `${analysis.qualityScore}%`,
+                }}
+              />
+            </div>
           </div>
         </div>
 
-        <section style={styles.cards}>
-          <QualityCard
-            title="Missing Values"
-            value={analysis.missingValues}
-            message={
-              analysis.missingValues > 0
-                ? "Needs attention"
-                : "No missing values"
-            }
-          />
+        <div style={styles.cards}>
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Completeness
+            </div>
+            <div style={styles.cardValue}>
+              {Math.max(
+                0,
+                100 - analysis.missingValues
+              ).toFixed(1)}
+              %
+            </div>
+          </div>
 
-          <QualityCard
-            title="Duplicate Rows"
-            value={analysis.duplicateValues}
-            message={
-              analysis.duplicateValues > 0
-                ? "Duplicates detected"
-                : "No duplicates"
-            }
-          />
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Missing Values
+            </div>
+            <div
+              style={{
+                ...styles.cardValue,
+                color:
+                  analysis.missingValues > 0
+                    ? colors.yellow
+                    : colors.green,
+              }}
+            >
+              {analysis.missingValues}
+            </div>
+          </div>
 
-          <QualityCard
-            title="Outliers"
-            value={analysis.outlierValues}
-            message={
-              analysis.outlierValues > 0
-                ? "Outliers detected"
-                : "No outliers"
-            }
-          />
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Duplicate Records
+            </div>
+            <div
+              style={{
+                ...styles.cardValue,
+                color:
+                  analysis.duplicateValues > 0
+                    ? colors.yellow
+                    : colors.green,
+              }}
+            >
+              {analysis.duplicateValues}
+            </div>
+          </div>
 
-          <QualityCard
-            title="Total Issues"
-            value={analysis.totalIssues}
-            message={
-              analysis.totalIssues > 0
-                ? "Issues detected"
-                : "No issues detected"
-            }
-          />
-        </section>
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Outliers
+            </div>
+            <div
+              style={{
+                ...styles.cardValue,
+                color:
+                  analysis.outlierValues > 0
+                    ? colors.red
+                    : colors.green,
+              }}
+            >
+              {analysis.outlierValues}
+            </div>
+          </div>
+        </div>
 
-        <section style={styles.panel}>
+        <div style={styles.panel}>
           <div style={styles.panelHeader}>
             <div>
               <h3 style={styles.panelTitle}>
-                Column-wise Quality Analysis
+                Column Quality Analysis
               </h3>
 
               <p style={styles.panelText}>
-                Quality issues detected for each
-                dataset column.
+                Quality status for every dataset column.
               </p>
             </div>
-
-            <span style={styles.badge}>
-              {analysis.columns} Columns
-            </span>
           </div>
 
           <div style={{ overflowX: "auto" }}>
@@ -1359,13 +1765,10 @@ function App() {
                 {analysis.columnAnalysis.map(
                   (column) => (
                     <tr key={column.name}>
-                      <td
-                        style={{
-                          ...styles.td,
-                          fontWeight: 650,
-                        }}
-                      >
-                        {column.name}
+                      <td style={styles.td}>
+                        <strong>
+                          {column.name}
+                        </strong>
                       </td>
 
                       <td style={styles.td}>
@@ -1384,7 +1787,7 @@ function App() {
                               styles.healthyBadge
                             }
                           >
-                            Healthy
+                            ✓ Healthy
                           </span>
                         ) : (
                           <span
@@ -1392,7 +1795,7 @@ function App() {
                               styles.attentionBadge
                             }
                           >
-                            Needs Attention
+                            ! Needs Attention
                           </span>
                         )}
                       </td>
@@ -1402,49 +1805,7 @@ function App() {
               </tbody>
             </table>
           </div>
-        </section>
-
-        <section style={styles.panel}>
-          <h3 style={styles.panelTitle}>
-            Quality Assessment
-          </h3>
-
-          <p style={styles.panelText}>
-            Automated checks performed on the
-            uploaded dataset.
-          </p>
-
-          <div
-            style={{
-              ...styles.cards,
-              marginTop: "20px",
-            }}
-          >
-            <AssessmentCard
-              number="01"
-              title="Completeness Check"
-              text="Scans all cells for missing, null and empty values."
-            />
-
-            <AssessmentCard
-              number="02"
-              title="Duplicate Detection"
-              text="Identifies repeated complete records in the dataset."
-            />
-
-            <AssessmentCard
-              number="03"
-              title="Outlier Detection"
-              text="Uses the IQR statistical method to identify extreme numeric values."
-            />
-
-            <AssessmentCard
-              number="04"
-              title="Quality Scoring"
-              text="Generates an overall score based on detected data quality issues."
-            />
-          </div>
-        </section>
+        </div>
       </>
     );
   };
@@ -1454,346 +1815,511 @@ function App() {
   // =========================================================
 
   const renderDriftPage = () => {
-    const comparedColumns =
-      referenceData && analysis
-        ? analysis.columnNames.filter((column) =>
-            Object.keys(referenceData[0] || {}).includes(
-              column
-            )
-          ).length
-        : 0;
+    const result =
+      driftResult || calculateDrift();
 
     return (
       <>
         <div style={styles.pageIntro}>
           <div>
             <h2 style={styles.pageHeading}>
-              Data Drift Detection
+              Data Drift
             </h2>
 
             <p style={styles.pageDescription}>
-              Compare a current dataset against a
-              reference dataset to identify
-              distribution changes.
+              Compare your current dataset with a
+              reference dataset to identify distribution
+              changes.
             </p>
           </div>
 
-          <div style={styles.scoreBox}>
-            <strong style={{ fontSize: "23px" }}>
-              {referenceData
-                ? `${driftScore}%`
-                : "0.0%"}
-            </strong>
+          <button
+            style={styles.uploadButton}
+            onClick={() =>
+              referenceInputRef.current?.click()
+            }
+          >
+            + Reference Dataset
+          </button>
 
-            <span>Current Drift</span>
+          <input
+            ref={referenceInputRef}
+            type="file"
+            accept=".csv"
+            onChange={handleReferenceUpload}
+            style={{ display: "none" }}
+          />
+        </div>
+
+        <div style={styles.cards}>
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Reference Dataset
+            </div>
+
+            <div
+              style={{
+                fontSize: "15px",
+                fontWeight: 650,
+                color: "#DCE5F4",
+              }}
+            >
+              {referenceFile
+                ? referenceFile.name
+                : "Not uploaded"}
+            </div>
+          </div>
+
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Current Dataset
+            </div>
+
+            <div
+              style={{
+                fontSize: "15px",
+                fontWeight: 650,
+                color: "#DCE5F4",
+              }}
+            >
+              {file
+                ? file.name
+                : "Not uploaded"}
+            </div>
+          </div>
+
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Drift Percentage
+            </div>
+
+            <div style={styles.cardValue}>
+              {result
+                ? `${result.driftPercentage}%`
+                : "—"}
+            </div>
+          </div>
+
+          <div style={styles.card}>
+            <div style={styles.cardTop}>
+              Drifted Columns
+            </div>
+
+            <div style={styles.cardValue}>
+              {result
+                ? `${result.changedColumns}/${result.totalColumns}`
+                : "—"}
+            </div>
           </div>
         </div>
 
-        <section style={styles.cards}>
-          <QualityCard
-            title="Drift Score"
-            value={
-              referenceData
-                ? `${driftScore}%`
-                : "0.0%"
-            }
-            message={
-              referenceData
-                ? "Comparison complete"
-                : "Awaiting reference"
-            }
-          />
+        {!analysis || !referenceData ? (
+          <div style={styles.panel}>
+            <div style={styles.emptyState}>
+              <div style={{ fontSize: "45px" }}>
+                📈
+              </div>
 
-          <QualityCard
-            title="Reference Dataset"
-            value={
-              referenceFile
-                ? referenceFile.name
-                : "—"
-            }
-            message={
-              referenceFile
-                ? "Uploaded"
-                : "Not uploaded"
-            }
-          />
+              <h3
+                style={{
+                  color: "#F1F5FF",
+                }}
+              >
+                Upload both datasets
+              </h3>
 
-          <QualityCard
-            title="Columns Compared"
-            value={comparedColumns}
-            message="Comparison columns"
-          />
+              <p>
+                You need a reference dataset and a
+                current dataset to calculate drift.
+              </p>
 
-          <QualityCard
-            title="Drift Status"
-            value={
-              referenceData
-                ? driftScore > 20
-                  ? "Attention"
-                  : "Healthy"
-                : "Pending"
-            }
-            message={
-              referenceData
-                ? driftScore > 20
-                  ? "Significant drift"
-                  : "Low drift detected"
-                : "Ready for comparison"
-            }
-          />
-        </section>
+              <button
+                style={styles.uploadButton}
+                onClick={() => navigate("upload")}
+              >
+                Upload Datasets
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={styles.panel}>
+              <div style={styles.panelHeader}>
+                <div>
+                  <h3 style={styles.panelTitle}>
+                    Drift Analysis
+                  </h3>
 
-        <section style={styles.panel}>
-          <div style={styles.driftBox}>
-            <div
-              style={{
-                fontSize: "40px",
-                marginBottom: "15px",
-                animation:
-                  "driftMove 2s ease-in-out infinite",
-              }}
-            >
-              ↔
+                  <p style={styles.panelText}>
+                    Statistical comparison between
+                    reference and current data.
+                  </p>
+                </div>
+
+                <button
+                  style={styles.successButton}
+                  onClick={runDriftAnalysis}
+                >
+                  Run Analysis
+                </button>
+              </div>
+
+              <div style={styles.chartBox}>
+                {result &&
+                  result.details.map((item) => (
+                    <div
+                      style={styles.barRow}
+                      key={item.column}
+                    >
+                      <span style={styles.barLabel}>
+                        {item.column}
+                      </span>
+
+                      <div style={styles.barTrack}>
+                        <div
+                          style={{
+                            ...styles.barFill,
+                            width: `${Math.min(
+                              item.difference,
+                              100
+                            )}%`,
+                            background:
+                              item.severity === "High"
+                                ? "linear-gradient(90deg,#EF4444,#F97316)"
+                                : item.severity ===
+                                  "Medium"
+                                ? "linear-gradient(90deg,#F59E0B,#FBBF24)"
+                                : "linear-gradient(90deg,#3B82F6,#8B5CF6)",
+                          }}
+                        />
+                      </div>
+
+                      <span style={styles.barNumber}>
+                        {item.difference}%
+                      </span>
+                    </div>
+                  ))}
+              </div>
             </div>
 
-            <h3 style={{ fontSize: "22px" }}>
-              {referenceData
-                ? "Reference dataset uploaded"
-                : "Reference Dataset Required"}
-            </h3>
+            <div style={styles.panel}>
+              <div style={styles.panelHeader}>
+                <div>
+                  <h3 style={styles.panelTitle}>
+                    Drifted Columns
+                  </h3>
 
-            <p style={styles.panelText}>
-              {referenceData
-                ? `Comparing ${
-                    file?.name || "current dataset"
-                  } against ${
-                    referenceFile?.name ||
-                    "reference dataset"
-                  }.`
-                : "Upload a reference CSV to compare distributions and detect changes in numeric and categorical columns."}
-            </p>
+                  <p style={styles.panelText}>
+                    Columns with significant changes.
+                  </p>
+                </div>
+              </div>
 
-            <button
-              style={{
-                ...styles.uploadButton,
-                marginTop: "15px",
-              }}
-              onClick={() =>
-                document
-                  .getElementById(
-                    "reference-file-input"
-                  )
-                  ?.click()
-              }
-            >
-              + Upload Reference Dataset
-            </button>
-          </div>
-        </section>
+              <div style={{ overflowX: "auto" }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>
+                        Column
+                      </th>
+
+                      <th style={styles.th}>
+                        Change
+                      </th>
+
+                      <th style={styles.th}>
+                        Severity
+                      </th>
+
+                      <th style={styles.th}>
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {result &&
+                      result.details.map(
+                        (item) => (
+                          <tr key={item.column}>
+                            <td style={styles.td}>
+                              <strong>
+                                {item.column}
+                              </strong>
+                            </td>
+
+                            <td style={styles.td}>
+                              {item.difference}%
+                            </td>
+
+                            <td style={styles.td}>
+                              {item.severity ===
+                              "High" ? (
+                                <span
+                                  style={
+                                    styles.highBadge
+                                  }
+                                >
+                                  HIGH
+                                </span>
+                              ) : item.severity ===
+                                "Medium" ? (
+                                <span
+                                  style={
+                                    styles.mediumBadge
+                                  }
+                                >
+                                  MEDIUM
+                                </span>
+                              ) : (
+                                <span
+                                  style={
+                                    styles.healthyBadge
+                                  }
+                                >
+                                  LOW
+                                </span>
+                              )}
+                            </td>
+
+                            <td style={styles.td}>
+                              {item.drift ? (
+                                <span
+                                  style={
+                                    styles.highBadge
+                                  }
+                                >
+                                  Drift Detected
+                                </span>
+                              ) : (
+                                <span
+                                  style={
+                                    styles.healthyBadge
+                                  }
+                                >
+                                  Stable
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
       </>
     );
   };
 
   // =========================================================
-  // REPORTS PAGE
+  // REPORT PAGE
   // =========================================================
 
   const renderReportsPage = () => {
-    const hasAnalysis = !!analysis;
+    const drift = driftResult
+      ? driftResult.driftPercentage
+      : 0;
 
     return (
       <>
         <div style={styles.pageIntro}>
           <div>
             <h2 style={styles.pageHeading}>
-              Data Quality Reports
+              Reports
             </h2>
 
             <p style={styles.pageDescription}>
-              Generate a presentation-ready summary
-              of your dataset quality analysis.
+              Summary of your data quality and drift
+              analysis.
             </p>
-
-            {file && (
-              <p style={styles.datasetName}>
-                Current dataset:{" "}
-                <strong>{file.name}</strong>
-              </p>
-            )}
-          </div>
-
-          <div style={styles.scoreBox}>
-            <span>Overall Quality</span>
-
-            <strong style={{ fontSize: "25px" }}>
-              {hasAnalysis
-                ? `${analysis.qualityScore}%`
-                : "—"}
-            </strong>
-
-            <span
-              style={
-                hasAnalysis
-                  ? analysis.qualityScore >= 90
-                    ? styles.good
-                    : analysis.qualityScore >= 75
-                    ? styles.warning
-                    : styles.danger
-                  : styles.muted
-              }
-            >
-              {hasAnalysis
-                ? analysis.qualityScore >= 90
-                  ? "Excellent"
-                  : analysis.qualityScore >= 75
-                  ? "Good"
-                  : "Needs Attention"
-                : "No analysis yet"}
-            </span>
           </div>
         </div>
 
-        <section style={styles.cards}>
-          <QualityCard
-            title="Latest Quality Score"
-            value={
-              hasAnalysis
-                ? `${analysis.qualityScore}%`
-                : "—"
-            }
-            message={
-              hasAnalysis
-                ? "Analysis available"
-                : "Upload a dataset"
-            }
-          />
+        {!analysis ? (
+          <div style={styles.panel}>
+            <div style={styles.emptyState}>
+              <div style={{ fontSize: "45px" }}>
+                📄
+              </div>
 
-          <QualityCard
-            title="Total Issues"
-            value={
-              hasAnalysis
-                ? analysis.totalIssues
-                : "—"
-            }
-            message={
-              hasAnalysis &&
-              analysis.totalIssues > 0
-                ? "Review recommended"
-                : "No issues detected"
-            }
-          />
-
-          <QualityCard
-            title="Dataset Rows"
-            value={
-              hasAnalysis
-                ? analysis.rows
-                : "—"
-            }
-            message="Processed records"
-          />
-
-          <QualityCard
-            title="Dataset Columns"
-            value={
-              hasAnalysis
-                ? analysis.columns
-                : "—"
-            }
-            message="Detected fields"
-          />
-        </section>
-
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>
-            <div>
-              <h3 style={styles.panelTitle}>
-                Report Summary
+              <h3
+                style={{
+                  color: "#F1F5FF",
+                }}
+              >
+                No report available
               </h3>
 
-              <p style={styles.panelText}>
-                Current analysis snapshot.
+              <p>
+                Upload and analyze a dataset first.
               </p>
             </div>
-
-            <span style={styles.badge}>
-              Phase 1
-            </span>
           </div>
+        ) : (
+          <>
+            <div style={styles.cards}>
+              <div style={styles.card}>
+                <div style={styles.cardTop}>
+                  Overall Quality
+                </div>
 
-          <div style={styles.reportGrid}>
-            <ReportItem
-              label="Dataset"
-              value={
-                file
-                  ? file.name
-                  : "No dataset uploaded"
-              }
-            />
+                <div style={styles.cardValue}>
+                  {analysis.qualityScore}%
+                </div>
+              </div>
 
-            <ReportItem
-              label="Quality Score"
-              value={
-                hasAnalysis
-                  ? `${analysis.qualityScore}%`
-                  : "—"
-              }
-            />
+              <div style={styles.card}>
+                <div style={styles.cardTop}>
+                  Drift
+                </div>
 
-            <ReportItem
-              label="Missing Values"
-              value={
-                hasAnalysis
-                  ? analysis.missingValues
-                  : "—"
-              }
-            />
+                <div style={styles.cardValue}>
+                  {drift}%
+                </div>
+              </div>
 
-            <ReportItem
-              label="Duplicates"
-              value={
-                hasAnalysis
-                  ? analysis.duplicateValues
-                  : "—"
-              }
-            />
+              <div style={styles.card}>
+                <div style={styles.cardTop}>
+                  Issues
+                </div>
 
-            <ReportItem
-              label="Outliers"
-              value={
-                hasAnalysis
-                  ? analysis.outlierValues
-                  : "—"
-              }
-            />
+                <div style={styles.cardValue}>
+                  {analysis.totalIssues}
+                </div>
+              </div>
+            </div>
 
-            <ReportItem
-              label="Total Issues"
-              value={
-                hasAnalysis
-                  ? analysis.totalIssues
-                  : "—"
-              }
-            />
-          </div>
+            <div style={styles.panel}>
+              <div style={styles.panelHeader}>
+                <div>
+                  <h3 style={styles.panelTitle}>
+                    Data Quality Report
+                  </h3>
 
-          <div style={styles.note}>
-            {hasAnalysis ? (
-              <>
-                <strong>Report ready:</strong>{" "}
-                Your dataset quality analysis has been
-                completed. Review the detected issues
-                before presentation.
-              </>
-            ) : (
-              <>
-                <strong>Next step:</strong>{" "}
-                Upload a CSV dataset to generate the
-                quality report.
-              </>
-            )}
-          </div>
-        </section>
+                  <p style={styles.panelText}>
+                    Generated from the uploaded dataset.
+                  </p>
+                </div>
+
+                <button
+                  style={styles.smallButton}
+                  onClick={() =>
+                    window.print()
+                  }
+                >
+                  Print / Save PDF
+                </button>
+              </div>
+
+              <div style={styles.reportCard}>
+                <h3
+                  style={{
+                    color: "#F1F5FF",
+                  }}
+                >
+                  Dataset Information
+                </h3>
+
+                <p style={styles.panelText}>
+                  Dataset:{" "}
+                  <strong>
+                    {file?.name || "Unknown"}
+                  </strong>
+                </p>
+
+                <p style={styles.panelText}>
+                  Rows:{" "}
+                  <strong>
+                    {analysis.rows}
+                  </strong>
+                </p>
+
+                <p style={styles.panelText}>
+                  Columns:{" "}
+                  <strong>
+                    {analysis.columns}
+                  </strong>
+                </p>
+
+                <p style={styles.panelText}>
+                  Quality Score:{" "}
+                  <strong>
+                    {analysis.qualityScore}%
+                  </strong>
+                </p>
+
+                <hr
+                  style={{
+                    border: 0,
+                    borderTop:
+                      "1px solid #1B2940",
+                    margin: "20px 0",
+                  }}
+                />
+
+                <h3
+                  style={{
+                    color: "#F1F5FF",
+                  }}
+                >
+                  Detected Issues
+                </h3>
+
+                <p style={styles.panelText}>
+                  Missing Values:{" "}
+                  <strong>
+                    {analysis.missingValues}
+                  </strong>
+                </p>
+
+                <p style={styles.panelText}>
+                  Duplicate Records:{" "}
+                  <strong>
+                    {analysis.duplicateValues}
+                  </strong>
+                </p>
+
+                <p style={styles.panelText}>
+                  Outliers:{" "}
+                  <strong>
+                    {analysis.outlierValues}
+                  </strong>
+                </p>
+
+                <hr
+                  style={{
+                    border: 0,
+                    borderTop:
+                      "1px solid #1B2940",
+                    margin: "20px 0",
+                  }}
+                />
+
+                <h3
+                  style={{
+                    color: "#F1F5FF",
+                  }}
+                >
+                  Recommendation
+                </h3>
+
+                <p
+                  style={{
+                    color: "#8FA0B8",
+                    lineHeight: 1.7,
+                  }}
+                >
+                  {analysis.totalIssues === 0
+                    ? "The dataset currently appears healthy. Continue monitoring data quality regularly."
+                    : "Review the detected missing values, duplicate records and outliers before using the dataset for downstream analytics or machine-learning workflows."}
+                </p>
+              </div>
+            </div>
+          </>
+        )}
       </>
     );
   };
@@ -1803,562 +2329,209 @@ function App() {
   // =========================================================
 
   const getPageTitle = () => {
-    if (page === "quality") {
-      return "Data Quality Analysis";
-    }
+    if (page === "dashboard")
+      return "Dashboard";
 
-    if (page === "drift") {
-      return "Data Drift Detection";
-    }
-
-    if (page === "reports") {
-      return "Data Quality Reports";
-    }
-
-    if (page === "upload") {
+    if (page === "upload")
       return "Upload Dataset";
-    }
 
-    return "Data Quality Overview";
+    if (page === "quality")
+      return "Data Quality";
+
+    if (page === "drift")
+      return "Data Drift";
+
+    if (page === "reports")
+      return "Reports";
+
+    return "Dashboard";
   };
 
   // =========================================================
-  // PAGE RENDER
-  // =========================================================
-
-  const renderPage = () => {
-    if (page === "quality") {
-      return renderQualityPage();
-    }
-
-    if (page === "drift") {
-      return renderDriftPage();
-    }
-
-    if (page === "reports") {
-      return renderReportsPage();
-    }
-
-    if (page === "upload") {
-      return renderUploadPage();
-    }
-
-    return renderDashboardPage();
-  };
-
-  // =========================================================
-  // MAIN UI
+  // RENDER
   // =========================================================
 
   return (
-    <>
-      <style>{`
-        * {
-          box-sizing: border-box;
-        }
+    <div style={styles.app}>
+      {/* SIDEBAR */}
 
-        body {
-          margin: 0;
-          background: #f4f7fb;
-        }
-
-        button:hover {
-          transform: translateY(-2px);
-          filter: brightness(1.04);
-        }
-
-        button:active {
-          transform: translateY(0);
-        }
-
-        @keyframes pageEnter {
-          from {
-            opacity: 0;
-            transform: translateY(12px);
-          }
-
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes cardEnter {
-          from {
-            opacity: 0;
-            transform: translateY(18px);
-          }
-
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes floatLogo {
-          0%, 100% {
-            transform: translateY(0);
-          }
-
-          50% {
-            transform: translateY(-5px);
-          }
-        }
-
-        @keyframes floatIcon {
-          0%, 100% {
-            transform: translateY(0);
-          }
-
-          50% {
-            transform: translateY(-10px);
-          }
-        }
-
-        @keyframes driftMove {
-          0%, 100% {
-            transform: translateX(-8px);
-          }
-
-          50% {
-            transform: translateX(8px);
-          }
-        }
-
-        ::-webkit-scrollbar {
-          width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-          background: #eef2f7;
-        }
-
-        ::-webkit-scrollbar-thumb {
-          background: #b9c4d4;
-          border-radius: 20px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-          background: #8fa0b8;
-        }
-      `}</style>
-
-      <div style={styles.app}>
-        {/* SIDEBAR */}
-
-        <aside style={styles.sidebar}>
-          <div style={styles.logoRow}>
-            <div style={styles.logo}>
-              DQ
-            </div>
-
-            <div>
-              <div style={styles.logoTitle}>
-                DataGuard
-              </div>
-
-              <div style={styles.logoSubtitle}>
-                AI Data Platform
-              </div>
-            </div>
+      <aside style={styles.sidebar}>
+        <div style={styles.logoRow}>
+          <div style={styles.logo}>
+            ◈
           </div>
 
-          <div style={styles.menuTitle}>
-            MAIN MENU
+          <div>
+            <div style={styles.logoTitle}>
+              DataGuard
+            </div>
+
+            <div style={styles.logoSubtitle}>
+              AI Data Platform
+            </div>
           </div>
+        </div>
 
-          <button
-            style={{
-              ...styles.navButton,
-              ...(page === "dashboard"
-                ? styles.activeNav
-                : {}),
-            }}
-            onClick={() =>
-              navigate("dashboard")
-            }
-          >
-            ⌂ &nbsp; Dashboard
-          </button>
+        <div style={styles.menuTitle}>
+          MAIN MENU
+        </div>
 
-          <button
-            style={{
-              ...styles.navButton,
-              ...(page === "upload"
-                ? styles.activeNav
-                : {}),
-            }}
-            onClick={() =>
-              navigate("upload")
-            }
-          >
-            ↑ &nbsp; Upload Dataset
-          </button>
+        <button
+          style={{
+            ...styles.navButton,
+            ...(page === "dashboard"
+              ? styles.activeNav
+              : {}),
+          }}
+          onClick={() => navigate("dashboard")}
+        >
+          ◉ &nbsp; Dashboard
+        </button>
 
-          <button
-            style={{
-              ...styles.navButton,
-              ...(page === "quality"
-                ? styles.activeNav
-                : {}),
-            }}
-            onClick={() =>
-              navigate("quality")
-            }
-          >
-            ◇ &nbsp; Data Quality
-          </button>
+        <button
+          style={{
+            ...styles.navButton,
+            ...(page === "upload"
+              ? styles.activeNav
+              : {}),
+          }}
+          onClick={() => navigate("upload")}
+        >
+          ↑ &nbsp; Upload Dataset
+        </button>
 
-          <button
-            style={{
-              ...styles.navButton,
-              ...(page === "drift"
-                ? styles.activeNav
-                : {}),
-            }}
-            onClick={() =>
-              navigate("drift")
-            }
-          >
-            ↗ &nbsp; Data Drift
-          </button>
+        <button
+          style={{
+            ...styles.navButton,
+            ...(page === "quality"
+              ? styles.activeNav
+              : {}),
+          }}
+          onClick={() => navigate("quality")}
+        >
+          ◈ &nbsp; Data Quality
+        </button>
 
-          <button
+        <button
+          style={{
+            ...styles.navButton,
+            ...(page === "drift"
+              ? styles.activeNav
+              : {}),
+          }}
+          onClick={() => navigate("drift")}
+        >
+          ↗ &nbsp; Data Drift
+        </button>
+
+        <button
+          style={{
+            ...styles.navButton,
+            ...(page === "reports"
+              ? styles.activeNav
+              : {}),
+          }}
+          onClick={() => navigate("reports")}
+        >
+          ▤ &nbsp; Reports
+        </button>
+
+        <div style={styles.menuTitle}>
+          SYSTEM
+        </div>
+
+        <div style={styles.systemBox}>
+          <span style={styles.systemDot} />
+
+          <span
             style={{
-              ...styles.navButton,
-              ...(page === "reports"
-                ? styles.activeNav
-                : {}),
+              color: "#C6D1E1",
+              fontSize: "12px",
             }}
-            onClick={() =>
-              navigate("reports")
-            }
           >
-            ▤ &nbsp; Reports
-          </button>
+            Analysis Engine Online
+          </span>
 
           <div
             style={{
-              ...styles.menuTitle,
-              marginTop: "35px",
+              color: "#66758B",
+              fontSize: "10px",
+              marginTop: "6px",
+              marginLeft: "16px",
             }}
           >
-            SYSTEM
+            Ready for dataset analysis
+          </div>
+        </div>
+      </aside>
+
+      {/* MAIN */}
+
+      <main style={styles.main}>
+        {/* TOP BAR */}
+
+        <header style={styles.topbar}>
+          <div>
+            <div style={styles.breadcrumb}>
+              DataGuard / {getPageTitle()}
+            </div>
+
+            <h1 style={styles.topTitle}>
+              {getPageTitle()}
+            </h1>
           </div>
 
-          <button
-            style={styles.navButton}
-            onClick={() =>
-              alert(
-                "Settings will be available in a future phase."
-              )
-            }
-          >
-            ⚙ &nbsp; Settings
-          </button>
-        </aside>
+          <div style={styles.userArea}>
+            <span style={styles.online}>
+              ● System Online
+            </span>
 
-        {/* MAIN */}
+            <div style={styles.userCircle}>
+              R
+            </div>
 
-        <main style={styles.main}>
-          <header style={styles.topbar}>
             <div>
-              <div style={styles.breadcrumb}>
-                Dashboard / {getPageTitle()}
+              <div
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 650,
+                  color: "#DCE5F4",
+                }}
+              >
+                Rashika
               </div>
 
-              <h1 style={styles.topTitle}>
-                {getPageTitle()}
-              </h1>
-            </div>
-
-            <div style={styles.userArea}>
-              <div style={styles.userCircle}>
-                U
-              </div>
-
-              <div>
-                <strong>User</strong>
-
-                <div
-                  style={{
-                    color: "#8996aa",
-                    fontSize: "13px",
-                  }}
-                >
-                  Data Engineer
-                </div>
+              <div
+                style={{
+                  fontSize: "10px",
+                  color: "#68778D",
+                }}
+              >
+                Data Engineer
               </div>
             </div>
-          </header>
-
-          <div style={styles.content}>
-            {renderPage()}
           </div>
-        </main>
+        </header>
 
-        {/* CURRENT DATASET INPUT */}
+        {/* CONTENT */}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv,text/csv"
-          style={{ display: "none" }}
-          onChange={handleFileChange}
-        />
+        <div style={styles.content}>
+          {page === "dashboard" &&
+            renderDashboard()}
 
-        {/* REFERENCE DATASET INPUT */}
+          {page === "upload" &&
+            renderUploadPage()}
 
-        <input
-          id="reference-file-input"
-          type="file"
-          accept=".csv,text/csv"
-          style={{ display: "none" }}
-          onChange={handleReferenceUpload}
-        />
-      </div>
-    </>
-  );
-}
+          {page === "quality" &&
+            renderQualityPage()}
 
-// =========================================================
-// QUALITY CARD
-// =========================================================
+          {page === "drift" &&
+            renderDriftPage()}
 
-function QualityCard({
-  title,
-  value,
-  message,
-}) {
-  const isLong =
-    typeof value === "string" &&
-    value.length > 15;
-
-  const isWarning =
-    message &&
-    (
-      message.includes("Attention") ||
-      message.includes("Review") ||
-      message.includes("detected")
-    );
-
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: "1px solid #e5eaf2",
-        borderRadius: "14px",
-        padding: "22px",
-        boxShadow:
-          "0 4px 18px rgba(24,45,80,0.05)",
-        transition:
-          "transform 0.3s ease, box-shadow 0.3s ease",
-        animation:
-          "cardEnter 0.55s ease both",
-      }}
-      onMouseEnter={(event) => {
-        event.currentTarget.style.transform =
-          "translateY(-6px)";
-        event.currentTarget.style.boxShadow =
-          "0 15px 35px rgba(24,45,80,0.12)";
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.transform =
-          "translateY(0)";
-        event.currentTarget.style.boxShadow =
-          "0 4px 18px rgba(24,45,80,0.05)";
-      }}
-    >
-      <div
-        style={{
-          color: "#65758f",
-          fontSize: "14px",
-          marginBottom: "18px",
-        }}
-      >
-        {title}
-      </div>
-
-      <h3
-        style={{
-          fontSize: isLong
-            ? "17px"
-            : "32px",
-          fontWeight: 750,
-          margin: "0 0 8px",
-          wordBreak: "break-word",
-        }}
-      >
-        {value}
-      </h3>
-
-      <p
-        style={{
-          color: isWarning
-            ? "#ff6500"
-            : "#00a65a",
-          fontSize: "13px",
-          fontWeight: 600,
-          margin: 0,
-        }}
-      >
-        {message}
-      </p>
-    </div>
-  );
-}
-
-// =========================================================
-// ASSESSMENT CARD
-// =========================================================
-
-function AssessmentCard({
-  number,
-  title,
-  text,
-}) {
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: "1px solid #e5eaf2",
-        borderRadius: "12px",
-        padding: "22px",
-        transition:
-          "all 0.3s ease",
-      }}
-      onMouseEnter={(event) => {
-        event.currentTarget.style.transform =
-          "translateY(-5px)";
-        event.currentTarget.style.boxShadow =
-          "0 12px 28px rgba(24,45,80,0.1)";
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.transform =
-          "translateY(0)";
-        event.currentTarget.style.boxShadow =
-          "none";
-      }}
-    >
-      <div
-        style={{
-          color: "#2563eb",
-          fontWeight: 800,
-          marginBottom: "12px",
-        }}
-      >
-        {number}
-      </div>
-
-      <h3
-        style={{
-          margin: "0 0 12px",
-          fontSize: "17px",
-        }}
-      >
-        {title}
-      </h3>
-
-      <p
-        style={{
-          margin: 0,
-          color: "#65758f",
-          fontSize: "14px",
-          lineHeight: 1.5,
-        }}
-      >
-        {text}
-      </p>
-    </div>
-  );
-}
-
-// =========================================================
-// REPORT ITEM
-// =========================================================
-
-function ReportItem({
-  label,
-  value,
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "8px",
-      }}
-    >
-      <span
-        style={{
-          color: "#7c8ba2",
-          fontSize: "13px",
-        }}
-      >
-        {label}
-      </span>
-
-      <strong
-        style={{
-          fontSize: "15px",
-          wordBreak: "break-word",
-        }}
-      >
-        {value}
-      </strong>
-    </div>
-  );
-}
-
-// =========================================================
-// ISSUE BAR
-// =========================================================
-
-function IssueBar({
-  label,
-  value,
-  max,
-}) {
-  const percentage =
-    max > 0
-      ? Math.min(100, (value / max) * 100)
-      : 0;
-
-  return (
-    <div style={{ marginBottom: "22px" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: "8px",
-          fontSize: "14px",
-        }}
-      >
-        <span>{label}</span>
-
-        <strong>{value}</strong>
-      </div>
-
-      <div
-        style={{
-          height: "9px",
-          background: "#e9eef5",
-          borderRadius: "10px",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            width: `${percentage}%`,
-            height: "100%",
-            background:
-              "linear-gradient(90deg, #2563eb, #60a5fa)",
-            borderRadius: "10px",
-            transition:
-              "width 1s ease",
-          }}
-        />
-      </div>
+          {page === "reports" &&
+            renderReportsPage()}
+        </div>
+      </main>
     </div>
   );
 }
